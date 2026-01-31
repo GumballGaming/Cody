@@ -49,7 +49,7 @@ Format: \`\`\`language:path/to/filename.ext
 - APIs, CLIs, games, data processing
 - Any programming language or framework
 
-You're a developer's companion - chat when they want to chat, code when they need code.`;
+You're a developer's companion - chat when they want to chat, code when they need code dont start.`;
 
 export class CodingAgent {
   private client: APIClient;

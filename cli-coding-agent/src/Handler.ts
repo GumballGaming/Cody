@@ -378,11 +378,17 @@ async function selectModel(): Promise<string | null> {
     const wasRaw = stdin.isRaw;
     stdin.setRawMode(true);
     stdin.resume();
+    stdin.setEncoding("utf8");
+
+    for (let i = 0; i < totalLines; i++) stdout.write("\n");
+    stdout.write(`\x1b[${totalLines}A`);
     stdout.write("\x1b[?25l");
-    stdout.write("\n".repeat(totalLines));
+    stdout.write("\x1b7");
 
     const render = () => {
-      stdout.write(`\x1b[${totalLines}F`);
+      stdout.write("\x1b8");
+      stdout.write("\x1b7");
+
       stdout.write(`\x1b[2K  ${theme.dim}Search:${theme.reset} ${query}${theme.dim}│${theme.reset}\n`);
       stdout.write(`\x1b[2K  ${theme.dim}${"─".repeat(40)}${theme.reset}\n`);
 
@@ -406,26 +412,46 @@ async function selectModel(): Promise<string | null> {
       }
 
       stdout.write(`\x1b[2K  ${theme.dim}${"─".repeat(40)}${theme.reset}\n`);
-      stdout.write(`\x1b[2K  ${theme.dim}↑↓ navigate • Enter select • Esc cancel${theme.reset}\n`);
+      stdout.write(`\x1b[2K  ${theme.dim}↑↓ navigate • Enter select • Esc cancel${theme.reset}`);
+      stdout.write("\x1b8");
     };
 
-    const onData = (buf: Buffer) => {
+    const cleanup = () => {
+      stdin.setRawMode(wasRaw);
+      stdin.pause();
+      stdout.write(`\x1b[${totalLines}B`);
+      stdout.write("\x1b[?25h");
+      stdout.write("\n");
+    };
+
+    const onData = (key: string) => {
       if (done) return;
-      const key = buf.toString();
 
       if (key === "\x1b[A" && selectedIndex > 0) {
         selectedIndex--;
         render();
-      } else if (key === "\x1b[B" && selectedIndex < filtered.length - 1) {
+        return;
+      }
+
+      if (key === "\x1b[B" && selectedIndex < filtered.length - 1) {
         selectedIndex++;
         render();
-      } else if (key === "\x1b" || key === "\x03") {
+        return;
+      }
+
+      if (key === "\x1b" || key === "\x03") {
         finish(null);
-      } else if (key === "\r" || key === "\n") {
+        return;
+      }
+
+      if (key === "\r" || key === "\n") {
         if (filtered.length > 0) {
           finish(filtered[selectedIndex]);
         }
-      } else if (key === "\x7f" || key === "\b") {
+        return;
+      }
+
+      if (key === "\x7f" || key === "\b") {
         if (query.length > 0) {
           query = query.slice(0, -1);
           filtered = query
@@ -435,25 +461,26 @@ async function selectModel(): Promise<string | null> {
           scrollOffset = 0;
           render();
         }
-      } else if (key.length === 1 && key.charCodeAt(0) >= 32 && key.charCodeAt(0) <= 126) {
+        return;
+      }
+
+      if (key.length === 1 && key.charCodeAt(0) >= 32 && key.charCodeAt(0) <= 126) {
         query += key;
         filtered = cachedModels.filter((m) => m.toLowerCase().includes(query.toLowerCase()));
         selectedIndex = 0;
         scrollOffset = 0;
         render();
+        return;
       }
     };
 
     const finish = (result: string | null) => {
       if (done) return;
       done = true;
-      
+
       stdin.removeListener("data", onData);
-      stdin.setRawMode(wasRaw);
-      stdin.pause();
-      stdout.write("\x1b[?25h");
-      console.log();
-      
+      cleanup();
+
       resolve(result);
     };
 
