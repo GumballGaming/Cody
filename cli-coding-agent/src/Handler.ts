@@ -7,7 +7,7 @@ import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
 
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 
 const theme = {
   reset: "\x1b[0m",
@@ -83,6 +83,62 @@ interface PendingFile {
 let pendingFiles: PendingFile[] = [];
 let lastUserMessage: string = "";
 
+// Cache for directory listings to fix case sensitivity
+let dirCache: Map<string, string[]> = new Map();
+
+function getDirContents(dir: string): string[] {
+  if (dirCache.has(dir)) {
+    return dirCache.get(dir)!;
+  }
+  try {
+    const contents = fs.readdirSync(dir);
+    dirCache.set(dir, contents);
+    return contents;
+  } catch {
+    return [];
+  }
+}
+
+function clearDirCache(): void {
+  dirCache.clear();
+}
+
+// Fix path case sensitivity by matching against actual filesystem
+function fixPathCase(inputPath: string): string {
+  if (path.isAbsolute(inputPath)) {
+    return inputPath;
+  }
+
+  const parts = inputPath.split(/[/\\]/);
+  let currentPath = currentDir;
+  const fixedParts: string[] = [];
+
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      fixedParts.push(part);
+      currentPath = path.dirname(currentPath);
+      continue;
+    }
+
+    const dirContents = getDirContents(currentPath);
+    const match = dirContents.find(
+      (item) => item.toLowerCase() === part.toLowerCase()
+    );
+
+    if (match) {
+      fixedParts.push(match);
+      currentPath = path.join(currentPath, match);
+    } else {
+      // No match found, use original (for new files/dirs)
+      fixedParts.push(part);
+      currentPath = path.join(currentPath, part);
+    }
+  }
+
+  return fixedParts.join("/");
+}
+
 class Spinner {
   private interval: NodeJS.Timeout | null = null;
   private frameIndex = 0;
@@ -97,7 +153,9 @@ class Spinner {
     process.stdout.write("\x1b[?25l");
     this.interval = setInterval(() => {
       const frame = icons.spinner[this.frameIndex % icons.spinner.length];
-      process.stdout.write(`\r${theme.cyan}${frame}${theme.reset} ${theme.dim}${this.message}...${theme.reset}`);
+      process.stdout.write(
+        `\r${theme.cyan}${frame}${theme.reset} ${theme.dim}${this.message}...${theme.reset}`
+      );
       this.frameIndex++;
     }, 80);
   }
@@ -131,9 +189,13 @@ class UI {
     const line = "─".repeat(Math.min(50, width - 4));
 
     console.log();
-    console.log(`  ${theme.cyan}${theme.bold}${icons.cody} CODY${theme.reset} ${theme.dim}v${VERSION}${theme.reset}`);
+    console.log(
+      `  ${theme.cyan}${theme.bold}${icons.cody} CODY${theme.reset} ${theme.dim}v${VERSION}${theme.reset}`
+    );
     console.log(`  ${theme.dim}${line}${theme.reset}`);
-    console.log(`  ${theme.dim}Your AI coding assistant. Type ${theme.reset}${theme.yellow}/help${theme.reset}${theme.dim} for commands.${theme.reset}`);
+    console.log(
+      `  ${theme.dim}Your AI coding assistant. Type ${theme.reset}${theme.yellow}/help${theme.reset}${theme.dim} for commands.${theme.reset}`
+    );
     console.log();
   }
 
@@ -144,7 +206,9 @@ class UI {
 
   static toolCall(name: string, detail?: string): void {
     const detailStr = detail ? ` ${theme.dim}${detail}${theme.reset}` : "";
-    console.log(`  ${theme.brightBlack}${icons.tool} ${name}${detailStr}${theme.reset}`);
+    console.log(
+      `  ${theme.brightBlack}${icons.tool} ${name}${detailStr}${theme.reset}`
+    );
   }
 
   static success(message: string): void {
@@ -160,10 +224,15 @@ class UI {
   }
 
   static info(message: string): void {
-    console.log(`  ${theme.blue}${icons.info}${theme.reset} ${theme.dim}${message}${theme.reset}`);
+    console.log(
+      `  ${theme.blue}${icons.info}${theme.reset} ${theme.dim}${message}${theme.reset}`
+    );
   }
 
-  static fileChange(filename: string, action: "create" | "modify" | "delete"): void {
+  static fileChange(
+    filename: string,
+    action: "create" | "modify" | "delete"
+  ): void {
     const actionColors = {
       create: theme.green,
       modify: theme.yellow,
@@ -174,7 +243,9 @@ class UI {
       modify: "~",
       delete: "-",
     };
-    console.log(`  ${actionColors[action]}${actionIcons[action]}${theme.reset} ${filename}`);
+    console.log(
+      `  ${actionColors[action]}${actionIcons[action]}${theme.reset} ${filename}`
+    );
   }
 
   static codeBlock(code: string, language?: string, filename?: string): void {
@@ -182,23 +253,33 @@ class UI {
     const maxLines = 15;
 
     if (filename) {
-      console.log(`  ${theme.dim}┌─ ${filename} ${language ? `(${language})` : ""}${theme.reset}`);
+      console.log(
+        `  ${theme.dim}┌─ ${filename} ${language ? `(${language})` : ""}${theme.reset}`
+      );
     }
 
     const displayLines = lines.slice(0, maxLines);
     displayLines.forEach((line, i) => {
       const lineNum = String(i + 1).padStart(3, " ");
-      console.log(`  ${theme.dim}│${theme.brightBlack}${lineNum}${theme.dim}│${theme.reset} ${line}`);
+      console.log(
+        `  ${theme.dim}│${theme.brightBlack}${lineNum}${theme.dim}│${theme.reset} ${line}`
+      );
     });
 
     if (lines.length > maxLines) {
-      console.log(`  ${theme.dim}│   │ ... ${lines.length - maxLines} more lines${theme.reset}`);
+      console.log(
+        `  ${theme.dim}│   │ ... ${lines.length - maxLines} more lines${theme.reset}`
+      );
     }
 
     console.log(`  ${theme.dim}└${"─".repeat(40)}${theme.reset}`);
   }
 
-  static diff(oldContent: string | null, newContent: string, filename: string): void {
+  static diff(
+    oldContent: string | null,
+    newContent: string,
+    filename: string
+  ): void {
     console.log();
     console.log(`  ${theme.bold}${filename}${theme.reset}`);
 
@@ -216,7 +297,11 @@ class UI {
 
     console.log(`  ${theme.dim}───${theme.reset}`);
 
-    for (let i = 0; i < Math.max(oldLines.length, newLines.length) && changes < maxChanges; i++) {
+    for (
+      let i = 0;
+      i < Math.max(oldLines.length, newLines.length) && changes < maxChanges;
+      i++
+    ) {
       if (oldLines[i] !== newLines[i]) {
         if (oldLines[i]) {
           console.log(`  ${theme.red}- ${oldLines[i]}${theme.reset}`);
@@ -250,7 +335,9 @@ function loadSavedConfig(): Partial<Config> {
       return JSON.parse(data);
     }
   } catch (err) {
-    UI.warning(`Could not load config: ${err instanceof Error ? err.message : err}`);
+    UI.warning(
+      `Could not load config: ${err instanceof Error ? err.message : err}`
+    );
   }
   return {};
 }
@@ -266,7 +353,9 @@ function saveConfigToDisk(): void {
     };
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(toSave, null, 2));
   } catch (err) {
-    UI.error(`Could not save config: ${err instanceof Error ? err.message : err}`);
+    UI.error(
+      `Could not save config: ${err instanceof Error ? err.message : err}`
+    );
   }
 }
 
@@ -315,7 +404,9 @@ async function fetchModels(): Promise<string[]> {
   spinner.start();
 
   try {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
     if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
 
     const res = await fetch(`${config.apiUrl}/models`, {
@@ -330,7 +421,11 @@ async function fetchModels(): Promise<string[]> {
     }
 
     const data = (await res.json()) as { data?: { id: string }[] };
-    const models = data.data?.map((m) => m.id).filter(Boolean).sort() || [];
+    const models =
+      data.data
+        ?.map((m) => m.id)
+        .filter(Boolean)
+        .sort() || [];
 
     if (models.length > 0) {
       cachedModels = models;
@@ -353,7 +448,9 @@ async function selectModel(): Promise<string | null> {
   }
 
   console.log();
-  console.log(`  ${theme.bold}Select a model${theme.reset} ${theme.dim}(${cachedModels.length} available)${theme.reset}`);
+  console.log(
+    `  ${theme.bold}Select a model${theme.reset} ${theme.dim}(${cachedModels.length} available)${theme.reset}`
+  );
   console.log();
 
   const stdin = process.stdin;
@@ -389,11 +486,14 @@ async function selectModel(): Promise<string | null> {
       stdout.write("\x1b8");
       stdout.write("\x1b7");
 
-      stdout.write(`\x1b[2K  ${theme.dim}Search:${theme.reset} ${query}${theme.dim}│${theme.reset}\n`);
+      stdout.write(
+        `\x1b[2K  ${theme.dim}Search:${theme.reset} ${query}${theme.dim}│${theme.reset}\n`
+      );
       stdout.write(`\x1b[2K  ${theme.dim}${"─".repeat(40)}${theme.reset}\n`);
 
       if (selectedIndex < scrollOffset) scrollOffset = selectedIndex;
-      if (selectedIndex >= scrollOffset + maxVisible) scrollOffset = selectedIndex - maxVisible + 1;
+      if (selectedIndex >= scrollOffset + maxVisible)
+        scrollOffset = selectedIndex - maxVisible + 1;
 
       for (let i = 0; i < maxVisible; i++) {
         const idx = scrollOffset + i;
@@ -412,7 +512,9 @@ async function selectModel(): Promise<string | null> {
       }
 
       stdout.write(`\x1b[2K  ${theme.dim}${"─".repeat(40)}${theme.reset}\n`);
-      stdout.write(`\x1b[2K  ${theme.dim}↑↓ navigate • Enter select • Esc cancel${theme.reset}`);
+      stdout.write(
+        `\x1b[2K  ${theme.dim}↑↓ navigate • Enter select • Esc cancel${theme.reset}`
+      );
       stdout.write("\x1b8");
     };
 
@@ -427,14 +529,17 @@ async function selectModel(): Promise<string | null> {
     const onData = (key: string) => {
       if (done) return;
 
-      if (key === "\x1b[A" && selectedIndex > 0) {
-        selectedIndex--;
+      // Immediately restore cursor position to prevent character flash
+      stdout.write("\x1b8");
+
+      if (key === "\x1b[A") {
+        if (selectedIndex > 0) selectedIndex--;
         render();
         return;
       }
 
-      if (key === "\x1b[B" && selectedIndex < filtered.length - 1) {
-        selectedIndex++;
+      if (key === "\x1b[B") {
+        if (selectedIndex < filtered.length - 1) selectedIndex++;
         render();
         return;
       }
@@ -455,18 +560,26 @@ async function selectModel(): Promise<string | null> {
         if (query.length > 0) {
           query = query.slice(0, -1);
           filtered = query
-            ? cachedModels.filter((m) => m.toLowerCase().includes(query.toLowerCase()))
+            ? cachedModels.filter((m) =>
+                m.toLowerCase().includes(query.toLowerCase())
+              )
             : [...cachedModels];
           selectedIndex = 0;
           scrollOffset = 0;
-          render();
         }
+        render();
         return;
       }
 
-      if (key.length === 1 && key.charCodeAt(0) >= 32 && key.charCodeAt(0) <= 126) {
+      if (
+        key.length === 1 &&
+        key.charCodeAt(0) >= 32 &&
+        key.charCodeAt(0) <= 126
+      ) {
         query += key;
-        filtered = cachedModels.filter((m) => m.toLowerCase().includes(query.toLowerCase()));
+        filtered = cachedModels.filter((m) =>
+          m.toLowerCase().includes(query.toLowerCase())
+        );
         selectedIndex = 0;
         scrollOffset = 0;
         render();
@@ -504,16 +617,29 @@ function initAgent(): void {
 
 function getFullStructure(dir: string): string {
   const skipDirs = new Set([
-    "node_modules", "__pycache__", "dist", "build", ".git",
-    ".next", "coverage", ".cache", "vendor", "target", ".vscode",
-    ".idea", "out", "bin", "obj"
+    "node_modules",
+    "__pycache__",
+    "dist",
+    "build",
+    ".git",
+    ".next",
+    "coverage",
+    ".cache",
+    "vendor",
+    "target",
+    ".vscode",
+    ".idea",
+    "out",
+    "bin",
+    "obj",
   ]);
 
   const lines: string[] = [`${path.basename(dir)}/`];
 
   const walk = (d: string, indent: string): void => {
     try {
-      const items = fs.readdirSync(d)
+      const items = fs
+        .readdirSync(d)
         .filter((i) => !i.startsWith(".") && !skipDirs.has(i))
         .sort((a, b) => {
           try {
@@ -549,16 +675,31 @@ function getFullStructure(dir: string): string {
 
 function printFullStructure(dir: string): void {
   const skipDirs = new Set([
-    "node_modules", "__pycache__", "dist", "build", ".git",
-    ".next", "coverage", ".cache", "vendor", "target", ".vscode",
-    ".idea", "out", "bin", "obj"
+    "node_modules",
+    "__pycache__",
+    "dist",
+    "build",
+    ".git",
+    ".next",
+    "coverage",
+    ".cache",
+    "vendor",
+    "target",
+    ".vscode",
+    ".idea",
+    "out",
+    "bin",
+    "obj",
   ]);
 
-  console.log(`  ${theme.cyan}${icons.folder}${theme.reset} ${path.basename(dir)}/`);
+  console.log(
+    `  ${theme.cyan}${icons.folder}${theme.reset} ${path.basename(dir)}/`
+  );
 
   const walk = (d: string, indent: string): void => {
     try {
-      const items = fs.readdirSync(d)
+      const items = fs
+        .readdirSync(d)
         .filter((i) => !i.startsWith(".") && !skipDirs.has(i))
         .sort((a, b) => {
           try {
@@ -579,7 +720,9 @@ function printFullStructure(dir: string): void {
 
         try {
           const isDir = fs.statSync(p).isDirectory();
-          console.log(`  ${indent}${conn}${isDir ? theme.cyan : ""}${item}${isDir ? "/" : ""}${theme.reset}`);
+          console.log(
+            `  ${indent}${conn}${isDir ? theme.cyan : ""}${item}${isDir ? "/" : ""}${theme.reset}`
+          );
           if (isDir) walk(p, next);
         } catch {
           console.log(`  ${indent}${conn}${theme.dim}${item}${theme.reset}`);
@@ -594,6 +737,34 @@ function printFullStructure(dir: string): void {
 function resolvePath(p: string): string {
   if (p.startsWith("~")) p = p.replace("~", os.homedir());
   return path.isAbsolute(p) ? path.normalize(p) : path.resolve(currentDir, p);
+}
+
+// Find actual path with correct case
+function findActualPath(targetPath: string): string | null {
+  const resolved = resolvePath(targetPath);
+
+  // If it exists as-is, return it
+  if (fs.existsSync(resolved)) {
+    return resolved;
+  }
+
+  // Try case-insensitive match
+  const dir = path.dirname(resolved);
+  const base = path.basename(resolved);
+
+  if (!fs.existsSync(dir)) {
+    return null;
+  }
+
+  try {
+    const items = fs.readdirSync(dir);
+    const match = items.find((i) => i.toLowerCase() === base.toLowerCase());
+    if (match) {
+      return path.join(dir, match);
+    }
+  } catch {}
+
+  return null;
 }
 
 class CodeExtractor {
@@ -615,9 +786,13 @@ class CodeExtractor {
       const match = this.buffer.match(/```(\w+):([^\n]+)\n/);
       if (match) {
         this.inBlock = true;
-        this.filename = match[2].trim();
+        // Fix path case sensitivity
+        const rawFilename = match[2].trim();
+        this.filename = fixPathCase(rawFilename);
         this.code = "";
-        this.buffer = this.buffer.slice(this.buffer.indexOf(match[0]) + match[0].length);
+        this.buffer = this.buffer.slice(
+          this.buffer.indexOf(match[0]) + match[0].length
+        );
         UI.toolCall("write_file", this.filename);
       } else if (this.buffer.length > 200) {
         this.buffer = this.buffer.slice(-200);
@@ -628,7 +803,9 @@ class CodeExtractor {
     const endIndex = this.buffer.indexOf("```");
     if (endIndex !== -1) {
       this.code += this.buffer.slice(0, endIndex);
-      const fullPath = path.isAbsolute(this.filename) ? this.filename : path.join(this.dir, this.filename);
+      const fullPath = path.isAbsolute(this.filename)
+        ? this.filename
+        : path.join(this.dir, this.filename);
       const isNew = !fs.existsSync(fullPath);
 
       this.extractedFiles.push({
@@ -656,7 +833,9 @@ class CodeExtractor {
   flush(): void {
     if (this.inBlock && this.code) {
       this.code += this.buffer;
-      const fullPath = path.isAbsolute(this.filename) ? this.filename : path.join(this.dir, this.filename);
+      const fullPath = path.isAbsolute(this.filename)
+        ? this.filename
+        : path.join(this.dir, this.filename);
       this.extractedFiles.push({
         filename: this.filename,
         content: this.code.trim(),
@@ -681,7 +860,9 @@ async function processPendingFiles(rl: readline.Interface): Promise<void> {
   if (!pendingFiles.length) return;
 
   console.log();
-  console.log(`  ${theme.bold}${pendingFiles.length} file(s) to save${theme.reset}`);
+  console.log(
+    `  ${theme.bold}${pendingFiles.length} file(s) to save${theme.reset}`
+  );
   UI.divider();
 
   const files = [...pendingFiles];
@@ -694,15 +875,27 @@ async function processPendingFiles(rl: readline.Interface): Promise<void> {
       continue;
     }
 
-    const old = fs.existsSync(file.fullPath) ? fs.readFileSync(file.fullPath, "utf-8") : null;
+    const old = fs.existsSync(file.fullPath)
+      ? fs.readFileSync(file.fullPath, "utf-8")
+      : null;
 
     if (!autoAcceptAll) {
       UI.diff(old, file.content, file.filename);
-      const ans = await ask(rl, `\n  ${theme.yellow}Save this file?${theme.reset} ${theme.dim}[Y/n/a/s]${theme.reset} `);
+      const ans = await ask(
+        rl,
+        `\n  ${theme.yellow}Save this file?${theme.reset} ${theme.dim}[Y/n/a/s]${theme.reset} `
+      );
       const l = ans.toLowerCase();
-      if (l === "n") { UI.info(`Skipped ${file.filename}`); continue; }
+      if (l === "n") {
+        UI.info(`Skipped ${file.filename}`);
+        continue;
+      }
       if (l === "a") autoAcceptAll = true;
-      if (l === "s") { skip = true; UI.info(`Skipped remaining`); continue; }
+      if (l === "s") {
+        skip = true;
+        UI.info(`Skipped remaining`);
+        continue;
+      }
     }
 
     try {
@@ -710,18 +903,30 @@ async function processPendingFiles(rl: readline.Interface): Promise<void> {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(file.fullPath, file.content);
       UI.fileChange(file.filename, file.isNew ? "create" : "modify");
+      // Clear cache since we modified filesystem
+      clearDirCache();
     } catch (err) {
-      UI.error(`Failed to save ${file.filename}: ${err instanceof Error ? err.message : err}`);
+      UI.error(
+        `Failed to save ${file.filename}: ${err instanceof Error ? err.message : err}`
+      );
     }
   }
 }
 
-async function sendMessage(message: string, rl: readline.Interface): Promise<void> {
+async function sendMessage(
+  message: string,
+  rl: readline.Interface
+): Promise<void> {
   let fullMessage = message;
 
   if (isFirstMessage) {
     const structure = getFullStructure(currentDir);
-    fullMessage = `Project structure:\n${structure}\n\nHelp me code. Use \`\`\`lang:filename.ext for files.\n\nUser request: ${message}`;
+    fullMessage = `Current project structure (use these EXACT paths and names):
+${structure}
+
+IMPORTANT: When creating files, use the exact directory names shown above. Preserve case sensitivity.
+
+User request: ${message}`;
     isFirstMessage = false;
   }
 
@@ -756,7 +961,13 @@ function printHelp(): void {
   UI.divider();
 
   const categories = ["setup", "files", "shell", "chat", "other"] as const;
-  const names: Record<string, string> = { setup: "Setup", files: "Files", shell: "Shell", chat: "Chat", other: "Other" };
+  const names: Record<string, string> = {
+    setup: "Setup",
+    files: "Files",
+    shell: "Shell",
+    chat: "Chat",
+    other: "Other",
+  };
 
   for (const cat of categories) {
     const cmds = commandRegistry.filter((c) => c.category === cat);
@@ -764,7 +975,9 @@ function printHelp(): void {
     console.log();
     console.log(`  ${theme.cyan}${names[cat]}${theme.reset}`);
     for (const cmd of cmds) {
-      const aliases = cmd.aliases.length ? ` ${theme.dim}(${cmd.aliases.join(", ")})${theme.reset}` : "";
+      const aliases = cmd.aliases.length
+        ? ` ${theme.dim}(${cmd.aliases.join(", ")})${theme.reset}`
+        : "";
       console.log(`    ${theme.bold}${cmd.usage}${theme.reset}${aliases}`);
       console.log(`      ${theme.dim}${cmd.description}${theme.reset}`);
     }
@@ -772,7 +985,10 @@ function printHelp(): void {
   console.log();
 }
 
-async function handleCommand(input: string, rl: readline.Interface): Promise<boolean | "restart"> {
+async function handleCommand(
+  input: string,
+  rl: readline.Interface
+): Promise<boolean | "restart"> {
   const { command, args } = parseCommand(input);
   const arg = (i: number) => args[i];
 
@@ -819,6 +1035,7 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
         agent.clearHistory();
         isFirstMessage = true;
         conversationCount = 0;
+        clearDirCache();
         UI.success("Conversation cleared");
       } else {
         UI.warning("Not connected");
@@ -833,7 +1050,9 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
       } else {
         agent.clearHistory();
         isFirstMessage = true;
-        UI.info(`Retrying: ${lastUserMessage.slice(0, 50)}${lastUserMessage.length > 50 ? "..." : ""}`);
+        UI.info(
+          `Retrying: ${lastUserMessage.slice(0, 50)}${lastUserMessage.length > 50 ? "..." : ""}`
+        );
         await sendMessage(lastUserMessage, rl);
       }
       break;
@@ -844,21 +1063,36 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
       break;
 
     case "/cd": {
-      const p = arg(0) ? resolvePath(arg(0)) : os.homedir();
+      const target = arg(0) || os.homedir();
+      // First try exact path
+      let p = resolvePath(target);
+
+      // If not found, try case-insensitive match
+      if (!fs.existsSync(p) || !fs.statSync(p).isDirectory()) {
+        const actual = findActualPath(target);
+        if (actual && fs.statSync(actual).isDirectory()) {
+          p = actual;
+        }
+      }
+
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
         currentDir = p;
         process.chdir(currentDir);
         isFirstMessage = true;
+        clearDirCache();
         UI.success(`Changed to ${currentDir}`);
       } else {
-        UI.error("Directory not found");
+        UI.error(`Directory not found: ${target}`);
       }
       break;
     }
 
     case "/ls": {
       const p = arg(0) ? resolvePath(arg(0)) : currentDir;
-      if (!fs.existsSync(p)) { UI.error("Path not found"); break; }
+      if (!fs.existsSync(p)) {
+        UI.error("Path not found");
+        break;
+      }
       console.log();
       printFullStructure(p);
       console.log();
@@ -867,7 +1101,10 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
 
     case "/tree": {
       const p = arg(0) ? resolvePath(arg(0)) : currentDir;
-      if (!fs.existsSync(p)) { UI.error("Path not found"); break; }
+      if (!fs.existsSync(p)) {
+        UI.error("Path not found");
+        break;
+      }
       console.log();
       printFullStructure(p);
       console.log();
@@ -875,30 +1112,57 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
     }
 
     case "/cat": {
-      if (!arg(0)) { UI.error("Usage: /cat <file>"); break; }
-      const p = resolvePath(arg(0));
-      if (!fs.existsSync(p)) { UI.error("File not found"); break; }
+      if (!arg(0)) {
+        UI.error("Usage: /cat <file>");
+        break;
+      }
+      let p = resolvePath(arg(0));
+      if (!fs.existsSync(p)) {
+        const actual = findActualPath(arg(0));
+        if (actual) p = actual;
+      }
+      if (!fs.existsSync(p)) {
+        UI.error("File not found");
+        break;
+      }
       try {
         const content = fs.readFileSync(p, "utf-8");
         console.log();
         UI.codeBlock(content, path.extname(p).slice(1), path.basename(p));
       } catch (err) {
-        UI.error(`Cannot read file: ${err instanceof Error ? err.message : err}`);
+        UI.error(
+          `Cannot read file: ${err instanceof Error ? err.message : err}`
+        );
       }
       break;
     }
 
     case "/add": {
-      if (!agent) { UI.warning("Not connected. Run /setup first."); break; }
-      if (!arg(0)) { UI.error("Usage: /add <file>"); break; }
-      const p = resolvePath(arg(0));
-      if (!fs.existsSync(p)) { UI.error("File not found"); break; }
+      if (!agent) {
+        UI.warning("Not connected. Run /setup first.");
+        break;
+      }
+      if (!arg(0)) {
+        UI.error("Usage: /add <file>");
+        break;
+      }
+      let p = resolvePath(arg(0));
+      if (!fs.existsSync(p)) {
+        const actual = findActualPath(arg(0));
+        if (actual) p = actual;
+      }
+      if (!fs.existsSync(p)) {
+        UI.error("File not found");
+        break;
+      }
       UI.toolCall("read_file", arg(0));
       try {
         const content = fs.readFileSync(p, "utf-8");
         console.log();
         process.stdout.write(`  ${theme.magenta}${icons.cody}${theme.reset} `);
-        for await (const chunk of agent.sendStream(`Here's ${arg(0)}:\n\`\`\`\n${content}\n\`\`\`\n\nWhat would you like me to do?`)) {
+        for await (const chunk of agent.sendStream(
+          `Here's ${arg(0)}:\n\`\`\`\n${content}\n\`\`\`\n\nWhat would you like me to do?`
+        )) {
           process.stdout.write(chunk);
         }
         console.log("\n");
@@ -910,13 +1174,26 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
     }
 
     case "/run": {
-      if (!arg(0)) { UI.error("Usage: /run <file>"); break; }
-      const p = resolvePath(arg(0));
-      if (!fs.existsSync(p)) { UI.error("File not found"); break; }
+      if (!arg(0)) {
+        UI.error("Usage: /run <file>");
+        break;
+      }
+      let p = resolvePath(arg(0));
+      if (!fs.existsSync(p)) {
+        const actual = findActualPath(arg(0));
+        if (actual) p = actual;
+      }
+      if (!fs.existsSync(p)) {
+        UI.error("File not found");
+        break;
+      }
       UI.toolCall("run_script", arg(0));
       try {
         const result = await runScript(path.dirname(p), path.basename(p));
-        if (result.output && result.output !== "(no output)") { console.log(); console.log(result.output); }
+        if (result.output && result.output !== "(no output)") {
+          console.log();
+          console.log(result.output);
+        }
         if (result.error) UI.error(result.error);
         if (result.success) UI.success("Completed");
       } catch (err) {
@@ -926,12 +1203,18 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
     }
 
     case "/sh": {
-      if (!args.length) { UI.error("Usage: /sh <command>"); break; }
+      if (!args.length) {
+        UI.error("Usage: /sh <command>");
+        break;
+      }
       const cmd = args.join(" ");
       UI.toolCall("shell", cmd);
       try {
         const result = await runCommand(cmd, [], currentDir);
-        if (result.output && result.output !== "(no output)") { console.log(); console.log(result.output); }
+        if (result.output && result.output !== "(no output)") {
+          console.log();
+          console.log(result.output);
+        }
         if (result.error) UI.error(result.error);
       } catch (err) {
         UI.error(err instanceof Error ? err.message : String(err));
@@ -940,13 +1223,21 @@ async function handleCommand(input: string, rl: readline.Interface): Promise<boo
     }
 
     case "/edit": {
-      if (!arg(0)) { UI.error("Usage: /edit <file>"); break; }
+      if (!arg(0)) {
+        UI.error("Usage: /edit <file>");
+        break;
+      }
       const editor = process.env.EDITOR || process.env.VISUAL || "vim";
-      const p = resolvePath(arg(0));
+      let p = resolvePath(arg(0));
+      if (!fs.existsSync(p)) {
+        const actual = findActualPath(arg(0));
+        if (actual) p = actual;
+      }
       UI.toolCall("edit", `Opening in ${editor}`);
       try {
         const { spawnSync } = await import("child_process");
         spawnSync(editor, [p], { cwd: currentDir, stdio: "inherit" });
+        clearDirCache();
       } catch (err) {
         UI.error(`Failed: ${err instanceof Error ? err.message : err}`);
       }
@@ -966,8 +1257,12 @@ function showStatus(): void {
   console.log(`  ${theme.bold}Status${theme.reset}`);
   UI.divider();
 
-  const conn = agent ? `${theme.green}connected${theme.reset}` : `${theme.red}disconnected${theme.reset}`;
-  const key = config.apiKey ? `${theme.green}configured${theme.reset} (****${config.apiKey.slice(-4)})` : `${theme.red}not set${theme.reset}`;
+  const conn = agent
+    ? `${theme.green}connected${theme.reset}`
+    : `${theme.red}disconnected${theme.reset}`;
+  const key = config.apiKey
+    ? `${theme.green}configured${theme.reset} (****${config.apiKey.slice(-4)})`
+    : `${theme.red}not set${theme.reset}`;
 
   console.log(`
   ${theme.dim}Status:${theme.reset}     ${conn}
@@ -988,7 +1283,7 @@ async function runSetup(): Promise<void> {
   console.log();
 
   const defaultUrl = config.apiUrl || "https://openrouter.ai/api/v1";
-  
+
   const askQuestion = (question: string): Promise<string> => {
     return new Promise((resolve) => {
       const rl = readline.createInterface({
@@ -1003,7 +1298,9 @@ async function runSetup(): Promise<void> {
     });
   };
 
-  const url = await askQuestion(`  ${theme.dim}API URL${theme.reset} [${defaultUrl}]: `);
+  const url = await askQuestion(
+    `  ${theme.dim}API URL${theme.reset} [${defaultUrl}]: `
+  );
   if (url) {
     config.apiUrl = url.endsWith("/") ? url.slice(0, -1) : url;
     cachedModels = [];
@@ -1012,7 +1309,9 @@ async function runSetup(): Promise<void> {
   }
 
   const keyDisplay = config.apiKey ? `****${config.apiKey.slice(-4)}` : "none";
-  const key = await askQuestion(`  ${theme.dim}API Key${theme.reset} [${keyDisplay}]: `);
+  const key = await askQuestion(
+    `  ${theme.dim}API Key${theme.reset} [${keyDisplay}]: `
+  );
   if (key) {
     config.apiKey = key;
     cachedModels = [];
@@ -1023,7 +1322,10 @@ async function runSetup(): Promise<void> {
     spinner.start();
     try {
       const res = await fetch(`${config.apiUrl}/models`, {
-        headers: { "Authorization": `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        },
         signal: AbortSignal.timeout(10000),
       });
       spinner.stop();
@@ -1031,7 +1333,9 @@ async function runSetup(): Promise<void> {
       else UI.warning(`Connection returned ${res.status}`);
     } catch (err) {
       spinner.stop();
-      UI.warning(`Connection failed: ${err instanceof Error ? err.message : err}`);
+      UI.warning(
+        `Connection failed: ${err instanceof Error ? err.message : err}`
+      );
     }
   }
 
@@ -1049,7 +1353,9 @@ async function runSetup(): Promise<void> {
 }
 
 function ask(rl: readline.Interface, question: string): Promise<string> {
-  return new Promise((resolve) => rl.question(question, (ans) => resolve(ans.trim())));
+  return new Promise((resolve) =>
+    rl.question(question, (ans) => resolve(ans.trim()))
+  );
 }
 
 function createInterface(): readline.Interface {
@@ -1100,44 +1406,66 @@ async function main(): Promise<void> {
     const prompt = (): void => {
       const indicator = agent ? theme.green : theme.red;
 
-      rl.question(`\n  ${indicator}${icons.user}${theme.reset} `, async (input) => {
-        const trimmed = input.trim();
+      rl.question(
+        `\n  ${indicator}${icons.user}${theme.reset} `,
+        async (input) => {
+          const trimmed = input.trim();
 
-        if (!trimmed) { prompt(); return; }
-
-        if (trimmed.startsWith("/")) {
-          try {
-            const result = await handleCommand(trimmed, rl);
-            if (result === true) { rl.close(); process.exit(0); }
-            if (result === "restart") { rl.close(); startPrompt(); return; }
-          } catch (err) {
-            UI.error(`Command failed: ${err instanceof Error ? err.message : err}`);
+          if (!trimmed) {
+            prompt();
+            return;
           }
-          prompt();
-          return;
-        }
 
-        if (!agent) { UI.warning("Run /setup first"); prompt(); return; }
-
-        lastUserMessage = trimmed;
-
-        try {
-          await sendMessage(trimmed, rl);
-        } catch (err) {
-          console.log();
-          if (err instanceof Error) {
-            if (err.name === "AbortError" || err.message.includes("timeout")) {
-              UI.error("Request timed out. Try /retry");
-            } else {
-              UI.error(err.message);
+          if (trimmed.startsWith("/")) {
+            try {
+              const result = await handleCommand(trimmed, rl);
+              if (result === true) {
+                rl.close();
+                process.exit(0);
+              }
+              if (result === "restart") {
+                rl.close();
+                startPrompt();
+                return;
+              }
+            } catch (err) {
+              UI.error(
+                `Command failed: ${err instanceof Error ? err.message : err}`
+              );
             }
-          } else {
-            UI.error("An error occurred");
+            prompt();
+            return;
           }
-        }
 
-        prompt();
-      });
+          if (!agent) {
+            UI.warning("Run /setup first");
+            prompt();
+            return;
+          }
+
+          lastUserMessage = trimmed;
+
+          try {
+            await sendMessage(trimmed, rl);
+          } catch (err) {
+            console.log();
+            if (err instanceof Error) {
+              if (
+                err.name === "AbortError" ||
+                err.message.includes("timeout")
+              ) {
+                UI.error("Request timed out. Try /retry");
+              } else {
+                UI.error(err.message);
+              }
+            } else {
+              UI.error("An error occurred");
+            }
+          }
+
+          prompt();
+        }
+      );
     };
 
     prompt();

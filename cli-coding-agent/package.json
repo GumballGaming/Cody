@@ -6,8 +6,8 @@
     "cody": "./src/Handler.ts"
   },
   "scripts": {
-    "start": "bun run src/index.ts",
-    "dev": "bun --watch run src/index.ts",
+    "start": "bun run src/Handler.ts",
+    "dev": "bun --watch run src/Handler.ts",
     "build": "bun build src/index.ts --outdir ./dist --target node"
   },
   "devDependencies": {
