@@ -1,6 +1,9 @@
 # 🚀 Sonar
 **A powerful, terminal-based coding agent designed for your workflow.**
 
+**Go See What We Are:** 
+ **https://cody.space.z.ai**
+
 Cody is a comprehensive, open-source alternative to tools like Claude Code. Built for developers who prefer the speed and efficiency of the command line, it brings high-level AI coding assistance directly to your terminal.
 
 ## 👨‍💻 Development & Vision
