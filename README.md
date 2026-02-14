@@ -2,7 +2,7 @@
 **A powerful, terminal-based coding agent designed for your workflow.**
 
 **Go See What We Are:** 
- **[[Sonar](https://sonarcli.space.z.ai)**
+ **[Sonar](https://sonarcli.space.z.ai)**
  *Im to broke to buy a domain so i used Z.AI ai to 1. host the domain. 2. dont have to script the webpage*
 
 Cody is a comprehensive, open-source alternative to tools like Claude Code. Built for developers who prefer the speed and efficiency of the command line, it brings high-level AI coding assistance directly to your terminal.
